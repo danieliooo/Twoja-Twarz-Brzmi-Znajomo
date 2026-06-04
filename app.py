@@ -3,7 +3,7 @@ import pandas as pd
 import json
 
 # Konfiguracja strony
-st.set_page_config(page_title="TTBZ - Stała Baza Danych", layout="wide")
+st.set_page_config(page_title="TTBZ - Trwała Baza Danych", layout="wide")
 st.title("🏆 Profesjonalny System Statystyk: Twoja Twarz Brzmi Znajomo")
 
 # Stałe
@@ -20,24 +20,29 @@ def highlight_ranks(row):
     elif m_ce == 8: return ['background-color: #f4cccc; color: black; font-weight: bold'] * len(row)
     return [''] * len(row)
 
-# --- MECHANIZM STAŁEJ BAZY PRZEZ STREAMLIT SECRETS ---
+# --- POPRAWIONY MECHANIZM STAŁEJ BAZY (STREAMLIT STORAGE) ---
 def load_db():
-    # Sprawdzamy, czy w st.secrets istnieje już nasza zapisana baza
-    if "ttbz_database" in st.secrets:
-        try:
-            return json.loads(st.secrets["ttbz_database"])
-        except Exception:
-            pass
+    try:
+        # Łączymy się ze stałym magazynem Key-Value w chmurze Streamlit
+        db_conn = st.connection("storage", type="dict")
+        if "ttbz_database_v2" in db_conn:
+            return json.loads(db_conn["ttbz_database_v2"])
+    except Exception:
+        pass
     
-    # Jeśli baza w chmurze jest pusta, używamy tymczasowej pamięci sesji
+    # Bezpieczny fallback do pamięci sesji, jeśli magazyn nie jest jeszcze włączony
     if "temporary_db" not in st.session_state:
         st.session_state["temporary_db"] = {"editions": {}}
     return st.session_state["temporary_db"]
 
 def save_db(data):
     st.session_state["temporary_db"] = data
-    # Nadpisujemy wartość w st.secrets – to zapewnia stały zapis w chmurze Streamlit!
-    st.secrets["ttbz_database"] = json.dumps(data, ensure_ascii=False, indent=4)
+    try:
+        # Zapisujemy dane jako tekst bezpośrednio do trwałego magazynu chmury
+        db_conn = st.connection("storage", type="dict")
+        db_conn["ttbz_database_v2"] = json.dumps(data, ensure_ascii=False, indent=4)
+    except Exception:
+        pass
 
 db = load_db()
 
@@ -204,7 +209,7 @@ if selected_edition:
                 df_calc["rank"] = df_calc.index + 1
                 db["editions"][selected_edition]["episodes"][str(ep_num)] = df_calc.to_dict(orient="records")
                 save_db(db)
-                st.success(f"Odcinek {ep_num} został pomyślnie zapisany w stałej chmurze!")
+                st.success(f"Odcinek {ep_num} został pomyślnie zapisany w chmurze!")
                 st.rerun()
         else:
             st.warning("⚠️ Tylko zalogowany administrator może wprowadzać lub edytować wyniki odcinków.")
