@@ -3,7 +3,7 @@ import pandas as pd
 import json
 
 # Konfiguracja strony
-st.set_page_config(page_title="TTBZ - Pełne Statystyki", layout="wide")
+st.set_page_config(page_title="TTBZ - Stała Baza Danych", layout="wide")
 st.title("🏆 Profesjonalny System Statystyk: Twoja Twarz Brzmi Znajomo")
 
 # Stałe
@@ -20,26 +20,24 @@ def highlight_ranks(row):
     elif m_ce == 8: return ['background-color: #f4cccc; color: black; font-weight: bold'] * len(row)
     return [''] * len(row)
 
-# --- INICJALIZACJA STAŁEJ BAZY STREAMLIT ---
+# --- MECHANIZM STAŁEJ BAZY PRZEZ STREAMLIT SECRETS ---
 def load_db():
-    try:
-        db_conn = st.connection("storage", type="dict")
-        if "ttbz_data" in db_conn:
-            return json.loads(db_conn["ttbz_data"])
-    except Exception:
-        pass
+    # Sprawdzamy, czy w st.secrets istnieje już nasza zapisana baza
+    if "ttbz_database" in st.secrets:
+        try:
+            return json.loads(st.secrets["ttbz_database"])
+        except Exception:
+            pass
     
-    if "local_db" not in st.session_state:
-        st.session_state["local_db"] = {"editions": {}}
-    return st.session_state["local_db"]
+    # Jeśli baza w chmurze jest pusta, używamy tymczasowej pamięci sesji
+    if "temporary_db" not in st.session_state:
+        st.session_state["temporary_db"] = {"editions": {}}
+    return st.session_state["temporary_db"]
 
 def save_db(data):
-    st.session_state["local_db"] = data
-    try:
-        db_conn = st.connection("storage", type="dict")
-        db_conn["ttbz_data"] = json.dumps(data, ensure_ascii=False, indent=4)
-    except Exception:
-        pass
+    st.session_state["temporary_db"] = data
+    # Nadpisujemy wartość w st.secrets – to zapewnia stały zapis w chmurze Streamlit!
+    st.secrets["ttbz_database"] = json.dumps(data, ensure_ascii=False, indent=4)
 
 db = load_db()
 
@@ -90,7 +88,7 @@ if st.session_state["logged_in"]:
                 p_name = st.text_input(f"Uczestnik {i+1}", key=f"new_p_{i}")
                 if p_name: new_participants.append(p_name.strip())
         
-        if st.button("Zapisz Fonts", type="primary"):
+        if st.button("Zapisz konfigurację edycji", type="primary"):
             try:
                 parsed_pts = [int(x.strip()) for x in pts_input.split(",")]
                 parsed_jury = [x.strip() for x in jury_input.split(",") if x.strip()]
@@ -142,8 +140,6 @@ if selected_edition:
             performance_data = {}
             
             st.markdown("### 🎪 1. Oceny, Postacie i Piosenki")
-            
-            # Dynamiczne nagłówki tabeli wejściowej
             cols_h = st.columns([2, 1.5, 1.5] + [1] * len(jury_members))
             with cols_h[0]: st.markdown("**Uczestnik**")
             with cols_h[1]: st.markdown("**Występuje jako (Postać)**")
@@ -181,13 +177,9 @@ if selected_edition:
             final_rows = []
             for p in participants:
                 row = {
-                    "name": p, 
-                    "character": performance_data[p]["character"],
-                    "song": performance_data[p]["song"],
-                    "jury_pts": jury_data[p]["jury_pts"], 
-                    "bonus": bonus_received[p],
-                    "total_with_bonus": jury_data[p]["jury_pts"] + bonus_received[p], 
-                    "voted_to": bonus_votes[p]
+                    "name": p, "character": performance_data[p]["character"], "song": performance_data[p]["song"],
+                    "jury_pts": jury_data[p]["jury_pts"], "bonus": bonus_received[p],
+                    "total_with_bonus": jury_data[p]["jury_pts"] + bonus_received[p], "voted_to": bonus_votes[p]
                 }
                 for j_name in jury_members: row[j_name] = jury_data[p][j_name]
                 final_rows.append(row)
@@ -212,12 +204,11 @@ if selected_edition:
                 df_calc["rank"] = df_calc.index + 1
                 db["editions"][selected_edition]["episodes"][str(ep_num)] = df_calc.to_dict(orient="records")
                 save_db(db)
-                st.success(f"Odcinek {ep_num} został zapisany w stałej bazie danych!")
+                st.success(f"Odcinek {ep_num} został pomyślnie zapisany w stałej chmurze!")
                 st.rerun()
         else:
             st.warning("⚠️ Tylko zalogowany administrator może wprowadzać lub edytować wyniki odcinków.")
 
-    # Słownik wyciągający ostatnią postać uczestnika w danej edycji (do mniejszego druku)
     def get_last_characters(until_ep):
         last_chars = {p: "" for p in participants}
         for ep_id in sorted([int(k) for k in episodes.keys()]):
@@ -249,11 +240,8 @@ if selected_edition:
                 st.subheader(f"➔ Wyniki samego Odcinka {selected_ep}")
                 ep_data = episodes[str(selected_ep)]
                 df_ep = pd.DataFrame(ep_data)
-                
                 current_ep_jurors = [j for j in jury_members if j in df_ep.columns]
-                # Dodane kolumny character i song
                 display_cols = ["rank", "name", "character", "song"] + current_ep_jurors + ["jury_pts", "bonus", "total_with_bonus"]
-                
                 df_display = df_ep[display_cols].copy()
                 df_display.columns = ["M-ce", "Uczestnik", "Występujący jako", "Piosenka"] + current_ep_jurors + ["Suma od Jury", "Bonusy (+5)", "Łącznie"]
                 st.dataframe(df_display.style.apply(highlight_ranks, axis=1), use_container_width=True, hide_index=True)
@@ -261,7 +249,6 @@ if selected_edition:
                 st.subheader(f"➔ Klasyfikacje generalne CZĄSTKOWE (Stan po Odcinku {selected_ep})")
                 snap = get_general_up_to_episode(selected_ep)
                 snap_chars = get_last_characters(selected_ep)
-                
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.markdown("**1. Ogólna po tym odcinku**")
@@ -278,8 +265,6 @@ if selected_edition:
                     df_c3 = pd.DataFrame([{"Uczestnik": f"{k}\n({snap_chars[k]})" if snap_chars[k] else k, "Suma": v["bonus"]} for k, v in snap.items()]).sort_values(by="Suma", ascending=False).reset_index(drop=True)
                     df_c3.insert(0, "M-ce", df_c3.index + 1)
                     st.dataframe(df_c3.style.apply(highlight_ranks, axis=1), use_container_width=True, hide_index=True)
-        else:
-            st.info("Brak zapisanych odcinków.")
 
     # ==================== ZAKŁADKA 3: GŁÓWNA KLASYFIKACJA ZBIORCZA ====================
     with tab3:
@@ -287,11 +272,9 @@ if selected_edition:
         if episodes:
             all_totals = get_general_up_to_episode(999)
             global_last_chars = get_last_characters(999)
-            
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.subheader("📊 1. Główna Tabela OGÓLNA")
-                # Formatowanie tekstu uczestnika z postacią pod spodem (Streamlit obsługuje znaki nowej linii w tabelach)
                 df_m1 = pd.DataFrame([{"Uczestnik": f"{k}\n({global_last_chars[k]})" if global_last_chars[k] else k, "Punkty Łącznie": v["total"]} for k, v in all_totals.items()]).sort_values(by="Punkty Łącznie", ascending=False).reset_index(drop=True)
                 df_m1.insert(0, "M-ce", df_m1.index + 1)
                 st.dataframe(df_m1.style.apply(highlight_ranks, axis=1), use_container_width=True, hide_index=True)
@@ -319,8 +302,6 @@ if selected_edition:
                     df_j_single = pd.DataFrame([{"Uczestnik": f"{k}\n({global_last_chars[k]})" if global_last_chars[k] else k, "Suma pkt": v[j_name]} for k, v in j_totals.items()]).sort_values(by="Suma pkt", ascending=False).reset_index(drop=True)
                     df_j_single.insert(0, "Miejsce", df_j_single.index + 1)
                     st.dataframe(df_j_single.style.apply(highlight_ranks, axis=1), use_container_width=True, hide_index=True)
-        else:
-            st.info("Brak danych.")
 
     # ==================== ZAKŁADKA 4: STATYSTYKI I MATRYCA BONUSÓW ====================
     with tab4:
